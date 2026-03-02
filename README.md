@@ -15,7 +15,7 @@
 ## Installation
 
 ### Prérequis
-*   PostgreSQL 14, 15, ou 16.
+*   PostgreSQL 12, 13, 14, 15, 16 ou 17.
 *   Plugin de décodage logique `wal2json` installé (`postgresql-16-wal2json` sous Linux).
 *   Outils de compilation (`gcc`, `make`, `postgresql-server-dev-16`).
 
