@@ -1,0 +1,4 @@
+# pg_flashback extension
+comment = 'Flashback Table using CDC'
+default_version = '1.0'
+relocatable = false
