@@ -1,15 +1,23 @@
 # pg_flashback
 
-**A natively integrated, ultra-lightweight PostgreSQL Time Travel extension.**
+**An Enterprise-Grade, Native PostgreSQL Extension for Table and Schema Flashback to a Point-in-Time Without Backups.**
 
-`pg_flashback` brings Oracle-like "Flashback Query" and transaction-level point-in-time recovery (PITR) directly into the PostgreSQL engine. It operates silently in the background using Logical Decoding (`wal2json`) and Background Workers, offering an incredibly low-overhead way to audit changes, query historical data, and undo catastrophic human errors without restoring an entire database cluster.
+`pg_flashback` is a powerful, low-overhead extension that brings highly sought-after capabilities—comparable to Oracle's "Flashback Query" and transaction-level Point-In-Time Recovery (PITR)—directly into the open-source PostgreSQL ecosystem. 
+
+Unlike traditional trigger-based solutions that heavily penalize database performance during high-throughput operations, `pg_flashback` operates completely asynchronously. By intelligently leveraging PostgreSQL's Logical Decoding mechanism (`wal2json`) and executing entirely within isolated C Background Workers, the extension silently monitors and records row-level data changes (Inserts, Updates, Deletes) as they commit.
+
+This architectural design empowers Database Administrators (DBAs) and developers to:
+
+Query Historical Data: Seamlessly travel back in time to view a table exactly as it existed at a specific timestamp.
+Undo Catastrophes Instantly: Reverse massive, erroneous UPDATE statements or accidental DELETE operations without dropping constraints or suffering the downtime of restoring an entire database cluster from a physical backup.
+Perform Forensic Auditing: Gain granular visibility into every transaction, tracking the exact lifecycle of data changes.
 
 ## Key Features
 
 *   **Native Integration:** Built completely in C and PL/pgSQL for maximum efficiency.
 *   **Time Travel (Table As As Of):** Query the exact state of a table as it existed at any timestamp in the past.
 *   **Granular State Recovery:** Rollback specific tables (or an entire schema) to a past state without affecting other tables in the database.
-*   **Comprehensive Transaction Audit:** Track exactly *who* changed *what* and *when* using `flashback.changes_between()`.
+*   **Comprehensive Transaction Audit:** Track exactly *what* and *when* changed using `flashback.changes_between()`.
 *   **Partitioned Architecture:** Historical events are automatically stored in auto-rotating daily partitions to guarantee high query performance and automatic cleanup.
 *   **Zero-Downtime Recovery:** Fix `UPDATE` loops or accidental `DELETE`s securely, instantly, and without dropping constraints.
 *   **Multi-Database Support:** Handles multiple target databases simultaneously via isolated C Background Workers.
@@ -40,7 +48,7 @@ For the extension to work, your PostgreSQL server instance **MUST** be configure
 
 ```ini
 wal_level = logical
-max_replication_slots = 10     # Must be >= number of databases monitored
+max_replication_slots = 3     # Must be >= number of databases monitored
 max_worker_processes = 16      # Must have slots for pg_flashback workers
 
 # Load the core extension engine at Postmaster startup
@@ -55,7 +63,7 @@ pg_flashback.database_names = 'postgres, my_app_db, demo_db'
 ### 2. Compile and Install
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/pg_flashback.git
+git clone https://github.com/Oussama-DBAC/pg_flashback.git
 cd pg_flashback
 
 # Compile using the PGXS build framework
