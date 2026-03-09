@@ -1,4 +1,3 @@
--- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION pg_flashback" to load this file. \quit
 CREATE SCHEMA IF NOT EXISTS flashback_internal;
 REVOKE ALL ON SCHEMA flashback_internal FROM PUBLIC;
