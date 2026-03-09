@@ -1,163 +1,140 @@
-# pg_flashback: Flashback Query pour PostgreSQL
+# pg_flashback
 
-**pg_flashback** est une extension PostgreSQL qui permet de remonter le temps sur vos tables, à la manière de la fonctionnalité "Flashback" d'Oracle. Elle capture automatiquement les modifications (INSERT, UPDATE, DELETE) via la réplication logique et permet de restaurer une table à un état antérieur ou de consulter les données telles qu'elles étaient dans le passé.
+**A natively integrated, ultra-lightweight PostgreSQL Time Travel extension.**
 
-## Fonctionnalités Principales
+`pg_flashback` brings Oracle-like "Flashback Query" and transaction-level point-in-time recovery (PITR) directly into the PostgreSQL engine. It operates silently in the background using Logical Decoding (`wal2json`) and Background Workers, offering an incredibly low-overhead way to audit changes, query historical data, and undo catastrophic human errors without restoring an entire database cluster.
 
-*   **Time Travel Query** : Voir l'état d'une ligne ou d'une table à un instant T précis.
-*   **Flashback Table** : Restaurer une table entière à son état passé (annule les erreurs accidentelles).
-*   **Flashback to New Table** : Cloner une table telle qu'elle était dans le passé sans toucher à la table originale.
-*   **Audit et Historique** : Consulter l'historique des modifications (qui a fait quoi, quand).
-*   **Rétention Configurable** : Définir combien de temps l'historique est conservé (par défaut 1 heure).
+## Key Features
+
+*   **Native Integration:** Built completely in C and PL/pgSQL for maximum efficiency.
+*   **Time Travel (Table As Of):** Query the exact state of a table as it existed at any timestamp in the past.
+*   **Surgical Restorations:** Rollback specific tables (or an entire schema) to a past state without affecting other tables in the database.
+*   **Forensic Auditing:** Track exactly *who* changed *what* and *when* using `flashback.changes_between()`.
+*   **Partitioned Architecture:** Historical events are automatically stored in auto-rotating daily partitions to guarantee high query performance and automatic cleanup.
+*   **Zero-Downtime Recovery:** Fix `UPDATE` loops or accidental `DELETE`s securely, instantly, and without dropping constraints.
+*   **Multi-Database Support:** Handles multiple target databases simultaneously via isolated C Background Workers.
 
 ---
 
-## Installation
+## Architecture & Mechanics
 
-### Prérequis
-*   PostgreSQL 12, 13, 14, 15, 16 ou 17.
-*   Plugin de décodage logique `wal2json` installé (`postgresql-16-wal2json` sous Linux).
-*   Outils de compilation (`gcc`, `make`, `postgresql-server-dev-16`).
+Unlike traditional trigger-based auditing extensions (which slow down heavy `INSERT`/`UPDATE` operations by 50-200%), `pg_flashback` reads the **Write-Ahead Logs (WAL)** asynchronously via Logical Replication Slots.
 
-### Compilation
+1.  A C **Background Worker** connects to the database.
+2.  It creates a logical slot using the `wal2json` output plugin.
+3.  It streams the changes (Inserts, Updates, Deletes) of protected tables *after* they are committed.
+4.  It inserts these events into a hidden, daily-partitioned "vault" table (`flashback_internal.fb_event`).
+5.  All public read operations simply read and replay these events mathematically against the live table.
 
+---
+
+## Installation & Prerequisites
+
+### Prerequisites
+*   PostgreSQL 14, 15, 16, or 17 (Tested successfully on PG 17).
+*   The logical decoding plugin `wal2json` must be installed.
+*   PostgreSQL headers (`postgresql-server-dev-X` or `postgresql-devel`).
+
+### 1. Configure postgresql.conf
+For the extension to work, your PostgreSQL server instance **MUST** be configured with the logical replication level. Ensure these parameters are set in your `postgresql.conf`:
+
+```ini
+wal_level = logical
+max_replication_slots = 10     # Must be >= number of databases monitored
+max_worker_processes = 16      # Must have slots for pg_flashback workers
+
+# Load the core extension engine at Postmaster startup
+shared_preload_libraries = 'pg_flashback'
+
+# Define which databases the extension should monitor (comma-separated list)
+pg_flashback.database_names = 'postgres, my_app_db, demo_db'
+```
+
+*Restart the PostgreSQL service after changing these shared parameters.*
+
+### 2. Compile and Install
 ```bash
+# Clone the repository
+git clone https://github.com/your-username/pg_flashback.git
 cd pg_flashback
-make clean
-make
+
+# Compile using the PGXS build framework
+make 
 sudo make install
 ```
 
-### Configuration (postgresql.conf)
-
-Ajoutez ou modifiez ces lignes dans votre fichier `postgresql.conf` :
-
-```ini
-# Chargement de l'extension
-shared_preload_libraries = 'pg_flashback'
-
-# Niveau de WAL requis pour la réplication logique
-wal_level = logical
-
-# Augmenter le nombre max de worker si nécessaire (au moins +1 pour pg_flashback)
-max_worker_processes = 16
-
-# (Optionnel) Nom de la base à surveiller (défaut: postgres)
-pg_flashback.database_name = 'ma_base_de_donnees'
-
-# (Optionnel) Stockage des logs : 'logged' (sûr) ou 'unlogged' (rapide mais volatil)
-pg_flashback.table_storage_type = 'logged'
-```
-
-Redémarrez PostgreSQL pour appliquer les changements.
-
----
-
-## Utilisation
-
-Connectez-vous à votre base de données et activez l'extension :
-
+### 3. Create the Extension in your Database
+Connect to your target database (e.g., `psql -d my_app_db`) and install the SQL schema:
 ```sql
 CREATE EXTENSION pg_flashback;
 ```
 
-### 1. Activer le Flashback sur une Table
+---
 
-Pour commencer à enregistrer l'historique d'une table :
+## Quick Start Guide & API
+
+### 1. Activating Flashback on Tables
+Any table you wish to monitor **must** be explicitly enabled.
 
 ```sql
--- Activer avec une rétention de 1 jour
-SELECT flashback.enable_table('public.ma_table', '1 day');
+-- Enable tracking with the default retention (1 hour)
+SELECT flashback.enable_table('public.clients');
+
+-- Enable tracking with a custom retention period of 30 days
+SELECT flashback.enable_table('public.invoices', '30 days');
+```
+*Note: This automatically sets `REPLICA IDENTITY FULL` on the table to ensure the `old_values` of UPDATEs and DELETEs are captured in the WAL.*
+
+### 2. Time Travel: Querying the Past (`table_as_of`)
+A developer accidentally deleted all users at 14:00. You want to see the table exactly as it was at 13:59:
+
+```sql
+SELECT * FROM flashback.table_as_of('public.clients', '2026-10-10 13:59:00+00');
 ```
 
-*Cela va automatiquement configurer `REPLICA IDENTITY FULL` sur la table pour capturer les anciennes valeurs lors des mises à jour.*
-
-### 2. Time Travel (Voyage dans le temps)
-
-Voir à quoi ressemblait une ligne spécifique il y a 10 minutes :
+### 3. Auditing: Tracking Line-level Changes (`changes_between`)
+You want to know exactly what happened to the `clients` table between yesterday and today:
 
 ```sql
--- Voir l'état de la ligne ID=1 il y a 10 minutes
-SELECT flashback.get_row_at(
-    'public.ma_table', 
-    '{"id": 1}', 
-    now() - interval '10 minutes'
-);
+SELECT commit_ts, operation, old_values, new_values 
+FROM flashback.changes_between('public.clients', NOW() - INTERVAL '1 day', NOW());
 ```
 
-Voir tous les changements entre deux dates :
+### 4. Surgical Recovery: Rollback (`flashback_table`)
+**DANGER / RED BUTTON:** This physically rewinds the live table back to the exact state it was at the designated time, overwriting all changes made since that timestamp.
 
 ```sql
-SELECT * FROM flashback.changes_between(
-    'public.ma_table',
-    '2023-10-27 10:00:00',
-    '2023-10-27 11:00:00'
-);
+-- Revert the entire "clients" table back to exactly 2 hours ago
+SELECT flashback.flashback_table('public.clients', NOW() - INTERVAL '2 hours');
 ```
 
-### 3. Flashback (Restauration)
-
-**ATTENTION** : Cette opération modifie les données actuelles de la table pour revenir en arrière.
-
-```sql
--- Revenir à l'état d'il y a 30 minutes
-SELECT flashback.flashback_table('public.ma_table', now() - interval '30 minutes');
-```
-
-Pour plus de sécurité, vous pouvez restaurer dans une **nouvelle table** séparée :
+### 5. Safe Recovery: Clone the Past (`flashback_to_new_table`)
+If you want to recover data *without* overwriting the current live production table, you can materialize the past into a brand-new table.
 
 ```sql
--- Créer 'ma_table_restored' avec les données d'il y a 1 heure
-SELECT flashback.flashback_to_new_table(
-    'public.ma_table', 
-    'public.ma_table_restored', 
-    now() - interval '1 hour'
-);
-```
-
-### 4. Configuration et Maintenance
-
-Modifier la durée de rétention pour une table :
-
-```sql
-SELECT flashback.set_table_undo_retention('public.ma_table', '7 days');
-```
-
-Désactiver le flashback sur une table (arrête l'enregistrement et permet le nettoyage) :
-
-```sql
-SELECT flashback.disable_table('public.ma_table');
-```
-
-Voir les statistiques de stockage :
-
-```sql
-SELECT * FROM flashback.storage_stats;
+-- Creates a new physical table 'clients_backup_friday' containing the Friday state
+SELECT flashback.flashback_to_new_table('public.clients', 'public.clients_backup_friday', '2026-10-10 18:00:00');
 ```
 
 ---
 
-## Architecture Interne
+## Best Practices & Constraints
 
-L'extension se compose de deux parties :
+### Managing Foreign Keys (Cascade Rollbacks)
+If you attempt to use `flashback_table()` on a table that is linked to others via Foreign Keys (`Parent -> Child`), PostgreSQL will natively block the transaction (`SQL state: 23503`) to prevent orphaned records. 
 
-1.  **Background Worker (C)** :
-    *   Se connecte à la base en arrière-plan.
-    *   Crée un slot de réplication logique (`flashback_slot`).
-    *   Consomme les WAL via le plugin `wal2json`.
-    *   Insère les événements de changement dans la table `flashback_internal.fb_event`.
-    *   Gère le nettoyage automatique des vieilles partitions d'événements.
+To restore complex relational schemas safely, you must orchestrate a "Global Restore":
+1. Suspend constraints (`DISABLE TRIGGER ALL`).
+2. Rollback all related tables to the **exact same timestamp**.
+3. Re-enable constraints (`ENABLE TRIGGER ALL`).
 
-2.  **API SQL (PL/pgSQL)** :
-    *   Fournit les fonctions utilisateur (`flashback.*`).
-    *   Gère la logique de "rejeu inversé" (Reverse Replay) pour reconstruire les données passées.
+See `TEST_SCHEMA_GLOBAL_RESTORE.sql` in this repository for a concrete example of this pattern.
 
-Les données d'historique sont stockées dans la table partitionnée `flashback_internal.fb_event`.
+### Disk Space Estimation
+Because `pg_flashback` consumes WAL records and stores them in JSONB, plan your retention wisely. Unrelenting `UPDATE` streams on massive textual columns will require disk space. 
+Use `SELECT pg_size_pretty(sum(pg_total_relation_size(inhrelid))) FROM pg_inherits WHERE inhparent = 'flashback_internal.fb_event'::regclass;` to monitor the physical storage footprint.
 
 ---
 
-## ⚠️ Limitations Connues
-
-*   Nécessite que les tables aient une **Clé Primaire**.
-*   Le mode `REPLICA IDENTITY FULL` peut impacter légèrement les performances des UPDATE/DELETE sur la table source (plus de données écrites dans les WAL).
-*   Ne capture pas les changements de structure (DDL) comme `ALTER TABLE` (si vous changez la structure, l'historique précédent peut devenir illisible).
+## License
+This project is licensed under the PostgreSQL License. Feel free to fork, contribute, and enhance.
