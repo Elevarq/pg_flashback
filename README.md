@@ -7,9 +7,9 @@
 ## Key Features
 
 *   **Native Integration:** Built completely in C and PL/pgSQL for maximum efficiency.
-*   **Time Travel (Table As Of):** Query the exact state of a table as it existed at any timestamp in the past.
-*   **Surgical Restorations:** Rollback specific tables (or an entire schema) to a past state without affecting other tables in the database.
-*   **Forensic Auditing:** Track exactly *who* changed *what* and *when* using `flashback.changes_between()`.
+*   **Time Travel (Table As As Of):** Query the exact state of a table as it existed at any timestamp in the past.
+*   **Granular State Recovery:** Rollback specific tables (or an entire schema) to a past state without affecting other tables in the database.
+*   **Comprehensive Transaction Audit:** Track exactly *who* changed *what* and *when* using `flashback.changes_between()`.
 *   **Partitioned Architecture:** Historical events are automatically stored in auto-rotating daily partitions to guarantee high query performance and automatic cleanup.
 *   **Zero-Downtime Recovery:** Fix `UPDATE` loops or accidental `DELETE`s securely, instantly, and without dropping constraints.
 *   **Multi-Database Support:** Handles multiple target databases simultaneously via isolated C Background Workers.
@@ -108,12 +108,38 @@ FROM flashback.changes_between('public.clients', NOW() - INTERVAL '1 day', NOW()
 SELECT flashback.flashback_table('public.clients', NOW() - INTERVAL '2 hours');
 ```
 
-### 5. Safe Recovery: Clone the Past (`flashback_to_new_table`)
-If you want to recover data *without* overwriting the current live production table, you can materialize the past into a brand-new table.
+### 5. Table Management (Retention & Disabling)
+You can modify the length of time historical data is kept, or completely stop tracking a table when it is no longer needed.
 
 ```sql
--- Creates a new physical table 'clients_backup_friday' containing the Friday state
-SELECT flashback.flashback_to_new_table('public.clients', 'public.clients_backup_friday', '2026-10-10 18:00:00');
+-- Modify the retention window of an already enabled table
+SELECT flashback.set_table_undo_retention('public.clients', '30 days');  
+
+-- Disable tracking completely and purge its historical data
+SELECT flashback.disable_table('public.clients');  
+```
+
+### 6. System Horizon & Audit
+Find out exactly how far back in time a table can be safely restored, and get granular transaction logs for auditing purposes.
+
+```sql
+-- Discover the exact timestamp of the oldest historical record available for a table
+SELECT * FROM flashback.flashback_horizon('public.clients');  
+
+-- Retrieve formatted transaction logs (PK identification and changed values) for a specific time window
+SELECT * FROM flashback.get_transactions('public.clients', '2026-03-03 08:00', '2026-03-03 12:00');  
+```
+
+### 7. Optimization and Storage Logs (DBA Administration)
+`pg_flashback` provides built-in views to help administrators monitor disk space consumption and activity spikes.
+
+```sql
+-- View the disk size consumed by the historical data of each active table
+-- (Crucial for DBAs to monitor which tables consume the most Flashback space)
+SELECT * FROM flashback.storage_stats;
+
+-- View transaction activity metrics (Spikes/Load) per hour and per table
+SELECT * FROM flashback.transaction_stats;     
 ```
 
 ---
@@ -130,11 +156,8 @@ To restore complex relational schemas safely, you must orchestrate a "Global Res
 
 See `TEST_SCHEMA_GLOBAL_RESTORE.sql` in this repository for a concrete example of this pattern.
 
-### Disk Space Estimation
-Because `pg_flashback` consumes WAL records and stores them in JSONB, plan your retention wisely. Unrelenting `UPDATE` streams on massive textual columns will require disk space. 
-Use `SELECT pg_size_pretty(sum(pg_total_relation_size(inhrelid))) FROM pg_inherits WHERE inhparent = 'flashback_internal.fb_event'::regclass;` to monitor the physical storage footprint.
 
----
 
 ## License
-This project is licensed under the PostgreSQL License. Feel free to fork, contribute, and enhance.
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+Copyright (c) 2026 Oussama CHAOUACHI (DBACCOMPANY). All rights reserved.
