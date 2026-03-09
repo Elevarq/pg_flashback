@@ -2,7 +2,7 @@
 
 **An Enterprise-Grade, Native PostgreSQL Extension for Table and Schema Flashback to a Point-in-Time Without Backups.**
 
-`pg_flashback` is a powerful, low-overhead extension that brings highly sought-after capabilities—comparable to Oracle's "Flashback Query" and transaction-level Point-In-Time Recovery (PITR)—directly into the open-source PostgreSQL ecosystem. 
+`pg_flashback` is a powerful, low-overhead extension that brings highly sought-after capabilities—comparable to Oracle's "Flashback Query" and transaction-level Point-In-Time Recovery (PITR) directly into the open-source PostgreSQL ecosystem. 
 
 Unlike traditional trigger-based solutions that heavily penalize database performance during high-throughput operations, `pg_flashback` operates completely asynchronously. By intelligently leveraging PostgreSQL's Logical Decoding mechanism (`wal2json`) and executing entirely within isolated C Background Workers, the extension silently monitors and records row-level data changes (Inserts, Updates, Deletes) as they commit.
 
