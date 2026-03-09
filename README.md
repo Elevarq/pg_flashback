@@ -6,7 +6,7 @@
 
 Unlike traditional trigger-based solutions that heavily penalize database performance during high-throughput operations, `pg_flashback` operates completely asynchronously. By intelligently leveraging PostgreSQL's Logical Decoding mechanism (`wal2json`) and executing entirely within isolated C Background Workers, the extension silently monitors and records row-level data changes (Inserts, Updates, Deletes) as they commit.
 
-This architectural design empowers Database Administrators (DBAs) and developers to:
+This architectural design empowers (DBAs) and developers to:
 
 Query Historical Data: Seamlessly travel back in time to view a table exactly as it existed at a specific timestamp.
 Undo Catastrophes Instantly: Reverse massive, erroneous UPDATE statements or accidental DELETE operations without dropping constraints or suffering the downtime of restoring an entire database cluster from a physical backup.
