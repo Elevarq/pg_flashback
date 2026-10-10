@@ -28,6 +28,7 @@
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/timestamp.h"
+#include <limits.h>
 #include <time.h>
 
 PG_MODULE_MAGIC;
@@ -66,6 +67,7 @@ static void enter_silent_mode(void) {
 static volatile sig_atomic_t got_sigterm = false;
 static char *pg_flashback_database_names = "postgres";
 static char *pg_flashback_table_storage_type = "logged";
+static int pg_flashback_max_changes_per_cycle = 5000;
 
 
 static void pg_flashback_sigterm(SIGNAL_ARGS) {
@@ -202,7 +204,7 @@ void pg_flashback_main(Datum main_arg) {
           "  WITH raw_changes AS ( "
           "    SELECT lsn, xid, data::jsonb as json_data "
           "    FROM pg_logical_slot_get_changes($1, NULL, "
-          "100, "
+          "$2, "
           "      'format-version', '1', 'include-pk', 'true', 'include-lsn', "
           "'true', 'include-timestamp', 'true' "
           "    ) "
@@ -222,11 +224,12 @@ void pg_flashback_main(Datum main_arg) {
           "  AND f.commit_ts >= conf.enabled_at "
           "ON CONFLICT DO NOTHING";
 
-      Oid argtypes[1] = {TEXTOID};
-      Datum values[1] = {CStringGetTextDatum(slot_name)};
+      Oid argtypes[2] = {TEXTOID, INT4OID};
+      Datum values[2] = {CStringGetTextDatum(slot_name),
+                         Int32GetDatum(pg_flashback_max_changes_per_cycle)};
       int res;
 
-      res = SPI_execute_with_args(query, 1, argtypes, values, NULL, false, 0);
+      res = SPI_execute_with_args(query, 2, argtypes, values, NULL, false, 0);
 
       if (res < 0)
         elog(ERROR, "pg_flashback: SPI_execute failed with error code %d", res);
@@ -277,6 +280,13 @@ void _PG_init(void) {
       "Storage type for event table: 'logged' or 'unlogged'.", NULL,
       &pg_flashback_table_storage_type, "logged", PGC_SIGHUP, 0, NULL, NULL,
       NULL);
+
+  DefineCustomIntVariable(
+      "pg_flashback.max_changes_per_cycle",
+      "Maximum logical-decoding changes consumed from the slot per worker "
+      "cycle.",
+      NULL, &pg_flashback_max_changes_per_cycle, 5000, 1, INT_MAX, PGC_SIGHUP,
+      0, NULL, NULL, NULL);
 
 
   rawstring = pstrdup(pg_flashback_database_names);
