@@ -129,6 +129,18 @@ void pg_flashback_main(Datum main_arg) {
     }
 
     if (!exists) {
+      /* The extension is not present (e.g. it was dropped). Release our
+       * replication slot so it stops pinning WAL, then idle until the
+       * extension (re)appears. Without this, DROP EXTENSION would leave an
+       * orphaned logical slot that retains WAL indefinitely. */
+      {
+        Oid dargtypes[1] = {TEXTOID};
+        Datum dvalues[1] = {CStringGetTextDatum(slot_name)};
+        SPI_execute_with_args(
+            "SELECT pg_drop_replication_slot($1) FROM pg_replication_slots "
+            "WHERE slot_name = $1 AND database = current_database()",
+            1, dargtypes, dvalues, NULL, false, 0);
+      }
 
       SPI_finish();
       PopActiveSnapshot();
