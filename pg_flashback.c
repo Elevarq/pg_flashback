@@ -182,11 +182,11 @@ void pg_flashback_main(Datum main_arg) {
     {
       const char *query =
           "INSERT INTO flashback_internal.fb_event ( "
-          "  lsn, seq_id, commit_ts, table_schema, table_name, operation, "
+          "  lsn, seq_id, xid, commit_ts, table_schema, table_name, operation, "
           "pk_values, old_values, new_values "
           ") "
           "SELECT "
-          "  f.lsn, f.seq_id, f.commit_ts, f.item_schema, f.item_table, "
+          "  f.lsn, f.seq_id, f.xid, f.commit_ts, f.item_schema, f.item_table, "
           "  CASE WHEN f.change_obj->>'kind' = 'insert' THEN 'I' "
           "       WHEN f.change_obj->>'kind' = 'update' THEN 'U' "
           "       WHEN f.change_obj->>'kind' = 'delete' THEN 'D' "
@@ -208,7 +208,7 @@ void pg_flashback_main(Datum main_arg) {
           "    ) "
           "  ) "
           "  SELECT "
-          "    r.lsn, (r.json_data->>'timestamp')::timestamptz as commit_ts, "
+          "    r.lsn, r.xid::text AS xid, (r.json_data->>'timestamp')::timestamptz as commit_ts, "
           "    c.value as change_obj, c.value->>'schema' as item_schema, "
           "c.value->>'table' as item_table, c.seq_id "
           "  FROM raw_changes r "
