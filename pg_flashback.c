@@ -22,8 +22,10 @@
 #include "utils/snapmgr.h"
 #include "utils/wait_event.h"
 
+#include "access/htup_details.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
+#include "utils/datum.h"
 #include "utils/guc.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
@@ -514,21 +516,34 @@ Datum pg_flashback_table_as_of(PG_FUNCTION_ARGS) {
     SPI_execute_with_args(
         "SELECT * FROM flashback_internal.table_as_of_logic($1, $2)",
         2, argtypes, values, NULL, true, 0);
-    funcctx->max_calls = SPI_processed;
-    funcctx->user_fctx = SPI_tuptable;
 
+    /* Copy the result datums into the multi-call context and finish SPI now,
+     * rather than holding the SPI tuple table and connection open across
+     * per-call invocations (unsafe if another SPI user runs in between). */
+    funcctx->max_calls = SPI_processed;
+    if (SPI_processed > 0) {
+      Datum *rows = (Datum *) palloc(sizeof(Datum) * SPI_processed);
+      uint64 i;
+      for (i = 0; i < SPI_processed; i++) {
+        bool isnull;
+        Datum d = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc,
+                                1, &isnull);
+        rows[i] = isnull ? (Datum) 0 : datumCopy(d, false, -1);
+      }
+      funcctx->user_fctx = rows;
+    } else {
+      funcctx->user_fctx = NULL;
+    }
+
+    SPI_finish();
     MemoryContextSwitchTo(oldcontext);
   }
 
   funcctx = SRF_PERCALL_SETUP();
   if (funcctx->call_cntr < funcctx->max_calls) {
-    SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
-    bool isnull;
-    Datum res = SPI_getbinval(tuptable->vals[funcctx->call_cntr],
-                              tuptable->tupdesc, 1, &isnull);
-    SRF_RETURN_NEXT(funcctx, res);
+    Datum *rows = (Datum *) funcctx->user_fctx;
+    SRF_RETURN_NEXT(funcctx, rows[funcctx->call_cntr]);
   } else {
-    SPI_finish();
     SRF_RETURN_DONE(funcctx);
   }
 }
@@ -647,8 +662,6 @@ static Datum srf_handler(PG_FUNCTION_ARGS, const char *query) {
     }
 
     SPI_execute_with_args(query, nargs, argtypes, values, NULL, true, 0);
-    funcctx->max_calls = SPI_processed;
-    funcctx->user_fctx = SPI_tuptable;
 
     if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -657,17 +670,33 @@ static Datum srf_handler(PG_FUNCTION_ARGS, const char *query) {
 
     funcctx->tuple_desc = BlessTupleDesc(tupdesc);
     funcctx->attinmeta = TupleDescGetAttInMetadata(tupdesc);
+
+    /* Copy the result tuples into the multi-call context and finish SPI now,
+     * instead of holding the SPI tuple table/connection across per-call
+     * invocations. */
+    funcctx->max_calls = SPI_processed;
+    if (SPI_processed > 0) {
+      HeapTuple *tuples =
+          (HeapTuple *) palloc(sizeof(HeapTuple) * SPI_processed);
+      uint64 i;
+      for (i = 0; i < SPI_processed; i++)
+        tuples[i] = heap_copytuple(SPI_tuptable->vals[i]);
+      funcctx->user_fctx = tuples;
+    } else {
+      funcctx->user_fctx = NULL;
+    }
+
+    SPI_finish();
     MemoryContextSwitchTo(oldcontext);
   }
 
   funcctx = SRF_PERCALL_SETUP();
   if (funcctx->call_cntr < funcctx->max_calls) {
-    SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
-    HeapTuple tuple = tuptable->vals[funcctx->call_cntr];
-    Datum res = heap_copy_tuple_as_datum(tuple, funcctx->tuple_desc);
+    HeapTuple *tuples = (HeapTuple *) funcctx->user_fctx;
+    Datum res =
+        heap_copy_tuple_as_datum(tuples[funcctx->call_cntr], funcctx->tuple_desc);
     SRF_RETURN_NEXT(funcctx, res);
   } else {
-    SPI_finish();
     SRF_RETURN_DONE(funcctx);
   }
 }
